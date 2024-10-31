@@ -1,0 +1,29 @@
+{
+    "name": "basidi/data-explorer",
+    "description": "A Laravel package for exporting and importing data with filters",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Basidi\\DataExplorer\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "AYOUBBASIDI",
+            "email": "ayoubbasidi1@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "illuminate/support": "^8.0|^9.0|^10.0|^11.0",
+        "league/csv": "^9.18",
+        "phpoffice/phpspreadsheet": "^3.3"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Basidi\\DataExplorer\\DataExportImportServiceProvider"
+            ]
+        }
+    }
+}

@@ -59,9 +59,3 @@ Access the Data Explorer via the web interface in your Laravel application. The 
 ## Contributing
 
 Contributions are welcome! Feel free to open issues or submit pull requests.
-
----
-
-## License
-
-This package is open-source and available under the [MIT License](LICENSE).

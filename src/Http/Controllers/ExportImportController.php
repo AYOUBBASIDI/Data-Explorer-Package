@@ -427,4 +427,285 @@ class ExportImportController extends Controller
         }
     }
 
+    public function import(Request $request)
+    {
+        try {
+            // Validate basic request parameters
+            $validator = Validator::make($request->all(), [
+                'file' => 'required|file|max:10240', // Max 10MB
+                'table' => 'required|string',
+                'mapping' => 'required|json',
+                'options' => 'required|json'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['error' => $validator->errors()->first()], 422);
+            }
+
+            // Validate table exists
+            if (!Schema::hasTable($request->table)) {
+                return response()->json(['error' => 'Selected table does not exist'], 422);
+            }
+
+            // Parse options and column mapping
+            $options = json_decode($request->options, true);
+            $columnMapping = json_decode($request->mapping, true);
+
+            // Get table columns info for validation
+            $tableColumns = $this->getTableColumns($request->table);
+
+            // Process file based on type
+            $fileData = $this->processFile($request->file('file'), $options['skipHeader'] ?? true);
+
+            // Start database transaction
+            DB::beginTransaction();
+
+            $importedCount = 0;
+            $errors = [];
+            $batchSize = 1000; // Process in batches of 1000
+            $batch = [];
+
+            foreach ($fileData as $index => $row) {
+                $processedRow = $this->processRow($row, $columnMapping, $tableColumns);
+                
+                if ($processedRow['errors']) {
+                    $errors[] = [
+                        'row' => $index + 1,
+                        'errors' => $processedRow['errors']
+                    ];
+                    continue;
+                }
+
+                // Handle existing records if update option is enabled
+                if ($options['updateExisting'] && !empty($options['updateKey'])) {
+                    $existingRecord = DB::table($request->table)
+                        ->where($options['updateKey'], $processedRow['data'][$options['updateKey']])
+                        ->first();
+
+                    if ($existingRecord) {
+                        DB::table($request->table)
+                            ->where($options['updateKey'], $processedRow['data'][$options['updateKey']])
+                            ->update($processedRow['data']);
+                        $importedCount++;
+                        continue;
+                    }
+                }
+
+                $batch[] = $processedRow['data'];
+
+                // Insert batch when it reaches batch size
+                if (count($batch) >= $batchSize) {
+                    DB::table($request->table)->insert($batch);
+                    $importedCount += count($batch);
+                    $batch = [];
+                }
+            }
+
+            // Insert remaining records
+            if (!empty($batch)) {
+                DB::table($request->table)->insert($batch);
+                $importedCount += count($batch);
+            }
+
+            // If validation is enabled and there are errors, rollback
+            if ($options['validateData'] && !empty($errors)) {
+                DB::rollBack();
+                return response()->json([
+                    'error' => 'Validation failed',
+                    'details' => $errors
+                ], 422);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Import completed successfully',
+                'imported' => $importedCount
+            ]);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Import failed: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Process uploaded file and return data array
+     *
+     * @param UploadedFile $file
+     * @param bool $skipHeader
+     * @return array
+     */
+    private function processFile($file, $skipHeader = true)
+    {
+        $extension = $file->getClientOriginalExtension();
+        $data = [];
+
+        switch (strtolower($extension)) {
+            case 'csv':
+                $handle = fopen($file->getPathname(), 'r');
+                if ($skipHeader) {
+                    fgetcsv($handle); // Skip header row
+                }
+                while (($row = fgetcsv($handle)) !== false) {
+                    $data[] = $row;
+                }
+                fclose($handle);
+                break;
+
+            case 'xlsx':
+            case 'xls':
+                $spreadsheet = IOFactory::load($file->getPathname());
+                $worksheet = $spreadsheet->getActiveSheet();
+                $rows = $worksheet->toArray();
+                $data = $skipHeader ? array_slice($rows, 1) : $rows;
+                break;
+
+            case 'json':
+                $content = file_get_contents($file->getPathname());
+                $jsonData = json_decode($content, true);
+                $data = is_array($jsonData) ? $jsonData : [$jsonData];
+                break;
+
+            default:
+                throw new Exception('Unsupported file format');
+        }
+
+        return $data;
+    }
+
+    /**
+     * Process a single row of data
+     *
+     * @param array $row
+     * @param array $columnMapping
+     * @param array $tableColumns
+     * @return array
+     */
+    private function processRow($row, $columnMapping, $tableColumns)
+    {
+        $processedData = [];
+        $errors = [];
+
+        foreach ($columnMapping as $tableColumn => $fileColumn) {
+            if (empty($fileColumn)) {
+                continue; // Skip unmapped columns
+            }
+
+            $value = is_array($row) ? 
+                (isset($row[$fileColumn]) ? $row[$fileColumn] : null) : 
+                $row;
+
+            // Validate and cast value based on column type
+            $columnInfo = $tableColumns[$tableColumn] ?? null;
+            if ($columnInfo) {
+                $validationResult = $this->validateAndCastValue($value, $columnInfo);
+                if ($validationResult['error']) {
+                    $errors[] = "Column '$tableColumn': " . $validationResult['error'];
+                } else {
+                    $processedData[$tableColumn] = $validationResult['value'];
+                }
+            }
+        }
+
+        return [
+            'data' => $processedData,
+            'errors' => $errors
+        ];
+    }
+
+    /**
+     * Get table columns information
+     *
+     * @param string $table
+     * @return array
+     */
+    // private function getTableColumns($table)
+    // {
+    //     $columns = [];
+    //     $columnInfo = DB::select("SHOW COLUMNS FROM $table");
+
+    //     foreach ($columnInfo as $column) {
+    //         $columns[$column->Field] = [
+    //             'type' => $column->Type,
+    //             'nullable' => $column->Null === 'YES',
+    //             'default' => $column->Default,
+    //         ];
+    //     }
+
+    //     return $columns;
+    // }
+
+    /**
+     * Validate and cast value based on column type
+     *
+     * @param mixed $value
+     * @param array $columnInfo
+     * @return array
+     */
+    private function validateAndCastValue($value, $columnInfo)
+    {
+        if ($value === null || $value === '') {
+            if (!$columnInfo['nullable']) {
+                return ['error' => 'Value cannot be null', 'value' => null];
+            }
+            return ['error' => null, 'value' => null];
+        }
+
+        $type = strtolower(preg_replace('/\(.*\)/', '', $columnInfo['type']));
+
+        switch ($type) {
+            case 'int':
+            case 'integer':
+            case 'smallint':
+            case 'bigint':
+                if (!is_numeric($value)) {
+                    return ['error' => 'Value must be numeric', 'value' => null];
+                }
+                return ['error' => null, 'value' => (int)$value];
+
+            case 'decimal':
+            case 'float':
+            case 'double':
+                if (!is_numeric($value)) {
+                    return ['error' => 'Value must be numeric', 'value' => null];
+                }
+                return ['error' => null, 'value' => (float)$value];
+
+            case 'date':
+                try {
+                    $date = new \DateTime($value);
+                    return ['error' => null, 'value' => $date->format('Y-m-d')];
+                } catch (\Exception $e) {
+                    return ['error' => 'Invalid date format', 'value' => null];
+                }
+
+            case 'datetime':
+            case 'timestamp':
+                try {
+                    $date = new \DateTime($value);
+                    return ['error' => null, 'value' => $date->format('Y-m-d H:i:s')];
+                } catch (\Exception $e) {
+                    return ['error' => 'Invalid datetime format', 'value' => null];
+                }
+
+            case 'boolean':
+            case 'tinyint':
+                if (is_bool($value)) {
+                    return ['error' => null, 'value' => $value];
+                }
+                if (in_array(strtolower($value), ['1', 'true', 'yes', 'on'])) {
+                    return ['error' => null, 'value' => true];
+                }
+                if (in_array(strtolower($value), ['0', 'false', 'no', 'off'])) {
+                    return ['error' => null, 'value' => false];
+                }
+                return ['error' => 'Invalid boolean value', 'value' => null];
+
+            default:
+                // For string types (varchar, text, etc.)
+                return ['error' => null, 'value' => (string)$value];
+        }
+    }
+
 }

@@ -473,7 +473,7 @@
                     this.loading = true;
 
                     try {
-                        const exportRoute = "${window.location.origin}/data-explorer/export";
+                        const exportRoute = "/data-explorer/export";
                         const response = await fetch(exportRoute, {
                             method: 'POST',
                             headers: {
@@ -646,7 +646,7 @@
                     formData.append('options', JSON.stringify(this.importOptions));
                     
                     try {
-                        const response = await fetch('${window.location.origin}/data-explorer/import', {
+                        const response = await fetch('/data-explorer/import', {
                             method: 'POST',
                             headers: {
                                 'X-CSRF-TOKEN': document.querySelector('input[name="_token"]').value

@@ -53,9 +53,9 @@
                                     ? 'border-indigo-500 text-indigo-600' 
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300']">
                         <i class="fas fa-file-import mr-2"></i>Import Data
-                        <!-- <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                        <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                             Coming Soon
-                        </span> -->
+                        </span>
                     </button>
                 </nav>
             </div>
@@ -218,7 +218,7 @@
             </form>
 
             <!-- Import Form -->
-            <div v-if="activeTab === 'import'" class="text-center py-12">
+            <div class="text-center py-12">
                 <div v-if="importSuccess" class="bg-green-50 border-l-4 border-green-400 p-4 mb-6">
                     <div class="flex">
                         <div class="flex-shrink-0">
